@@ -4,7 +4,7 @@
 
 # https://www.docker.com/blog/docker-arm-virtual-meetup-multi-arch-with-buildx/
 
-FROM alpine as builder-base
+FROM  alpine AS builder-base
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -20,17 +20,17 @@ ENV NAGIOS_HOME=/opt/nagios \
     NAGIOSADMIN_PASS=nagios \
     NAGIOS_VERSION=4.4.6 \
     NAGIOS_PLUGINS_VERSION=2.3.3 \
+    NAGIOS_MKlivestatus=1.5.0p25 \
     NRPE_VERSION=4.0.3 \
     APACHE_LOCK_DIR=/var/run \
     APACHE_LOG_DIR=/var/log/apache2
-
 
 RUN addgroup -S ${NAGIOS_GROUP} && \
     adduser  -S ${NAGIOS_USER} -G ${NAGIOS_CMDGROUP} && \
     apk update && \
     apk add --no-cache git curl unzip apache2 apache2-utils rsyslog \
                         php7 php7-gd php7-cli runit parallel ssmtp \
-                        libltdl libintl openssl-dev php7-apache2 procps tzdata && \
+                        libltdl libintl libgcc openssl-dev php7-apache2 procps tzdata && \
                                                 \
     : '# For x64 the binary is : gosu-amd64' && \
     : '# For arm-v6 the binary is : gosu-armel' && \
@@ -61,6 +61,8 @@ RUN apk update && \
     apk add --no-cache build-base automake libtool autoconf py-docutils gnutls  \
                         gnutls-dev g++ make alpine-sdk build-base gcc autoconf \
                         gettext-dev linux-headers openssl-dev
+
+RUN apk add --no-cache rrdtool rrdtool-dev boost-dev 
 
 # Download Nagios core, plugins and nrpe sources                        
 RUN    cd /tmp && \
@@ -173,6 +175,16 @@ RUN mkdir -p /orig/apache2                     && \
     cp -r ${NAGIOS_HOME}/etc  /orig/etc        && \
     cp -r ${NAGIOS_HOME}/var  /orig/var         
 
+### Compile MK-livestatus
+# Get and Build
+
+RUN wget -O mk-livestatus-${NAGIOS_MKlivestatus}.tar.gz https://download.checkmk.com/checkmk/${NAGIOS_MKlivestatus}/mk-livestatus-${NAGIOS_MKlivestatus}.tar.gz &&\
+    tar zxf mk-livestatus-${NAGIOS_MKlivestatus}.tar.gz &&\
+    cd mk-livestatus-${NAGIOS_MKlivestatus} &&\
+    ./configure --with-nagios4 &&\
+    sed -i '28 a #include <sys/time.h>' src/ChronoUtils.h &&\
+    sed -i 's/sys\/poll.h/poll.h/g' nagios4/config.h &&\
+    make && make install 
 
 ### ========================== ###
 ### START OF ACTUAL DOCKERFILE ###
@@ -195,8 +207,9 @@ RUN mkdir -p ${NAGIOS_HOME}  && \
     
 WORKDIR ${NAGIOS_HOME}
 COPY --from=builder-compile ${NAGIOS_HOME} ${NAGIOS_HOME}
-
 COPY --from=builder-compile /orig /orig
+COPY --from=builder-compile /usr/local/lib/mk-livestatus/livestatus.o ${NAGIOS_HOME}
+COPY --from=builder-compile /usr/local/bin/unixcat /usr/local/bin/unixcat
 
 ADD overlay/ /
 
